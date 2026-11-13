@@ -22,7 +22,8 @@ jobs:
       - run: cargo --version
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      # Every test binary runs even when one fails, so one round shows everything that is broken.
+      - run: cargo test --workspace --no-fail-fast
 
   # A tag like v0.2.0 publishes a release. `hearth update` and the admin pages look for
   # one file per platform named hearth-<target> (.exe on Windows) and a SHA256SUMS file.

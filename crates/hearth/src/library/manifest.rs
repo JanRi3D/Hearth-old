@@ -25,11 +25,16 @@ pub struct FileEntry {
     pub chunks: Vec<u8>,
 }
 
-/// Where a manifest's file lives on disk. `None` for a path that would leave the root.
+/// Where a manifest's file lives on disk. `None` for a path that would leave the root, here
+/// or on a player's PC: manifest paths use forward slashes, and a backslash or a colon in a
+/// name means another place on Windows. The answer is the same on every system.
 pub fn resolve(root: &Path, relative: &str) -> Option<PathBuf> {
     if root.is_file() {
         // A single archive or installer: the manifest has one entry, the file itself.
         return Some(root.to_path_buf());
+    }
+    if relative.contains(['\\', ':']) {
+        return None;
     }
     let relative = Path::new(relative);
     relative.components().all(|part| matches!(part, Component::Normal(_))).then(|| root.join(relative))
@@ -59,8 +64,11 @@ pub fn list_files(root: &Path) -> std::io::Result<Vec<(String, u64, i64)>> {
                 let meta = entry.metadata()?;
                 let relative = entry.path().strip_prefix(root).unwrap_or(&entry.path()).to_path_buf();
                 // A name that is not valid Unicode cannot travel in JSON. Such files are left out.
-                if let Some(path) = relative.to_str() {
-                    files.push((path.replace('\\', "/"), meta.len(), mtime_of(&meta)));
+                // The names are joined with forward slashes whatever this system puts between
+                // them. Where a backslash is part of a name, it stays one.
+                let names: Option<Vec<&str>> = relative.components().map(|part| part.as_os_str().to_str()).collect();
+                if let Some(names) = names {
+                    files.push((names.join("/"), meta.len(), mtime_of(&meta)));
                 }
             }
         }
@@ -100,13 +108,18 @@ pub fn hash_file(file: &Path) -> std::io::Result<(Vec<u8>, Vec<u8>)> {
 pub fn build(root: &Path, known: &HashMap<String, FileEntry>) -> std::io::Result<Vec<FileEntry>> {
     list_files(root)?
         .into_iter()
-        .map(|(path, size, mtime)| match known.get(&path) {
-            Some(same) if same.size == size && same.mtime == mtime => Ok(same.clone()),
-            _ => {
-                let file = resolve(root, &path).ok_or_else(|| std::io::Error::other(format!("{path} leaves the game's folder")))?;
-                let (hash, chunks) = hash_file(&file)?;
-                Ok(FileEntry { path, size, mtime, hash, chunks })
-            }
+        .filter_map(|(path, size, mtime)| {
+            // ponytail: a file whose name has a backslash or a colon is not offered at all,
+            // because a Windows PC cannot store it. Offer it to other systems once Bonfire
+            // runs on them.
+            let Some(file) = resolve(root, &path) else {
+                tracing::warn!(%path, "left out of the download, the name cannot be used on Windows");
+                return None;
+            };
+            Some(match known.get(&path) {
+                Some(same) if same.size == size && same.mtime == mtime => Ok(same.clone()),
+                _ => hash_file(&file).map(|(hash, chunks)| FileEntry { path, size, mtime, hash, chunks }),
+            })
         })
         .collect()
 }
@@ -333,9 +346,22 @@ mod tests {
     fn paths_cannot_leave_the_game_folder() {
         let dir = tempfile::tempdir().unwrap();
         assert!(resolve(dir.path(), "bin/game.exe").is_some());
-        for bad in ["../secret", "bin/../../secret", "/etc/passwd", "C:\\Windows\\win.ini"] {
+        for bad in ["../secret", "bin/../../secret", "/etc/passwd", "C:\\Windows\\win.ini", "..\\..\\secret", "bin\\game.exe", "notes.txt:hidden"] {
             assert!(resolve(dir.path(), bad).is_none(), "{bad}");
         }
+    }
+
+    /// Only systems where a backslash can be part of a file's name can have such a file.
+    #[cfg(unix)]
+    #[test]
+    fn a_name_windows_cannot_store_is_not_offered() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("fine.txt"), b"a").unwrap();
+        std::fs::write(dir.path().join("odd\\name.txt"), b"b").unwrap();
+        let listed: Vec<String> = list_files(dir.path()).unwrap().into_iter().map(|(path, _, _)| path).collect();
+        assert_eq!(listed, ["fine.txt", "odd\\name.txt"], "the backslash is part of the name here, not a separator");
+        let offered: Vec<String> = build(dir.path(), &HashMap::new()).unwrap().into_iter().map(|file| file.path).collect();
+        assert_eq!(offered, ["fine.txt"]);
     }
 
     #[test]
