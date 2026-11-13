@@ -1,6 +1,31 @@
-[package]
-name = "Hearth"
+[workspace]
+resolver = "3"
+members = ["crates/hearth-api", "crates/hearth-web", "crates/hearth"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.94"
+repository = "https://github.com/JanRi3D/Hearth"
 
-[dependencies]
+[workspace.dependencies]
+hearth-api = { path = "crates/hearth-api" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+strip = true
+lto = "thin"
+
+# The web UI is compiled to WebAssembly by crates/hearth/build.rs with these two profiles.
+[profile.wasm-dev]
+inherits = "dev"
+opt-level = 1
+debug = false
+
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
