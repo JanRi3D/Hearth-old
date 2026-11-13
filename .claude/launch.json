@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "hearth",
+      "runtimeExecutable": "cargo",
+      "runtimeArgs": ["run", "-p", "hearth", "--", "--data", "target/dev-data"],
+      "port": 7300
+    },
+    {
+      "name": "hearth-fresh",
+      "runtimeExecutable": "cargo",
+      "runtimeArgs": ["run", "-p", "hearth", "--", "--data", "target/dev-data-fresh"],
+      "port": 7305
+    }
+  ]
+}
